@@ -618,7 +618,7 @@ public class TransactionBlock {
         // Initialize arrays to store move modules and objects that need to be resolved
         var moveModulesToResolve: [MoveCallTransaction] = []
         var objectsToResolve: [ObjectsToResolve] = []
-        var resolvedObjects: [ObjectsToResolve] = []
+        var resolvedObjects: [UInt16: ObjectsToResolve] = [:]
         
         for input in blockData.inputs {
             if case .string(let str) = input.value {
@@ -753,20 +753,30 @@ public class TransactionBlock {
                 // Update the input value in the objectsToResolve array based on the initial shared version or object reference
                 guard let initialSharedVersion = object.getSharedObjectInitialVersion() else {
                     guard let objRef = object.getObjectReference() else { continue }
-                    objectToResolve.input.value = .callArg(
-                        Input(
-                            type: .object(
-                                .immOrOwned(
-                                    ImmOrOwned(ref: objRef)
+                    guard let objectData = object.data else { continue }
+                    
+                    if try Self.isReceivingType(objectToResolve.normalizedType) {
+                        objectToResolve.input.value = .callArg(
+                            Input(
+                                type: .object(
+                                    .receiving(
+                                        ReceivingObject(ref: objRef)
+                                    )
                                 )
                             )
                         )
-                    )
-                    if resolvedObjects.count > Int(objectToResolve.input.index) {
-                        resolvedObjects[Int(objectToResolve.input.index)] = objectToResolve
                     } else {
-                        resolvedObjects.append(objectToResolve)
+                        objectToResolve.input.value = .callArg(
+                            Input(
+                                type: .object(
+                                    .immOrOwned(
+                                        ImmOrOwned(ref: objRef)
+                                    )
+                                )
+                            )
+                        )
                     }
+                    Self.storeResolvedObject(objectToResolve, in: &resolvedObjects)
                     continue
                 }
 
@@ -793,27 +803,48 @@ public class TransactionBlock {
                         )
                     )
                 )
-                if resolvedObjects.count > Int(objectToResolve.input.index) {
-                    if case .callArg(let callArgResolved) = resolvedObjects[Int(objectToResolve.input.index)].input.value! {
-                        if case .callArg(let callArgToResolve) = objectToResolve.input.value {
-                            if case .object(let obj) = callArgToResolve.inputType, case .shared(var shared) = obj {
-                                shared.mutable = callArgResolved.isMutableSharedObjectInput() || shared.mutable
-                                objectToResolve.input.value = .callArg(Input(type: .object(.shared(shared))))
-                            }
-                        }
-                    }
-                    resolvedObjects[Int(objectToResolve.input.index)] = objectToResolve
-                } else {
-                    resolvedObjects.append(objectToResolve)
-                }
+                Self.storeResolvedObject(objectToResolve, in: &resolvedObjects)
             }
 
-            for objectToResolve in resolvedObjects {
+            for objectToResolve in resolvedObjects.values {
                 self.blockData.builder.inputs[Int(objectToResolve.input.index)] = objectToResolve.input
             }
             
             self.blockData.builder.inputs = self.blockData.builder.inputs.sorted { $0.index < $1.index }
         }
+    }
+
+    /// True when a Move parameter type is `0x2::transfer::Receiving<T>` (by value or by
+    /// reference). A generic `T` parameter is not checked against its type arguments.
+    static func isReceivingType(_ type: SuiMoveNormalizedType?) throws -> Bool {
+        guard let structTag = type?.extractStructTag() else { return false }
+        return try structTag.address.hex() == Inputs.normalizeSuiAddress(value: "0x2") &&
+            structTag.module == "transfer" &&
+            structTag.name == "Receiving"
+    }
+
+        /// Stores a resolved object under its input index.
+    ///
+    /// The same input can be resolved more than once (once with no type, then once per Move
+    /// call that uses it). The last entry wins, except that a shared object stays mutable
+    /// if any earlier entry for the same input needed it mutable.
+    ///
+    /// Keyed by the input index, not by position: inputs can resolve in any order, and an
+    /// array position does not match the input index when they do.
+    static func storeResolvedObject(
+        _ objectToResolve: ObjectsToResolve,
+        in resolvedObjects: inout [UInt16: ObjectsToResolve]
+    ) {
+        var objectToResolve = objectToResolve
+        let index = objectToResolve.input.index
+        if case .callArg(let callArgResolved)? = resolvedObjects[index]?.input.value,
+           case .callArg(let callArgToResolve)? = objectToResolve.input.value,
+           case .object(let obj) = callArgToResolve.inputType,
+           case .shared(var shared) = obj {
+            shared.mutable = callArgResolved.isMutableSharedObjectInput() || shared.mutable
+            objectToResolve.input.value = .callArg(Input(type: .object(.shared(shared))))
+        }
+        resolvedObjects[index] = objectToResolve
     }
 
     /// Prepares the transaction block with the provided build options.
