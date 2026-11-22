@@ -26,8 +26,12 @@
 import Foundation
 import SwiftyJSON
 
-/// A structure representing a reference to an object that is either immutable or owned.
-/// Conforming to `KeyProtocol` makes this struct usable wherever object keys are needed.
+/// A reference to an object that was sent to another object's address, and that a Move
+/// call receives through a `0x2::transfer::Receiving<T>` parameter.
+///
+/// It is not the same as `ImmOrOwned`. The object is owned by the parent object, not by the
+/// sender, so it must be encoded as `ObjectArg.receiving`. An `.immOrOwned` input for it
+/// fails transaction validation.
 public struct ReceivingObject: KeyProtocol {
     /// A reference to a SuiObject.
     public var ref: SuiObjectRef

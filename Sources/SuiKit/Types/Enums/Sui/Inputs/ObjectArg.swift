@@ -34,7 +34,9 @@ public enum ObjectArg: KeyProtocol {
 
     /// Represents a shared object argument.
     case shared(SharedObjectArg)
-    
+
+    /// Represents an object owned by another object, passed to a
+    /// `0x2::transfer::Receiving<T>` parameter. BCS discriminator 2.
     case receiving(ReceivingObject)
 
     /// A static function to create an `ObjectArg` instance from a JSON object.
