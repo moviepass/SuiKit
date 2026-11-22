@@ -61,4 +61,46 @@ final class ResolvedObjectsTest: XCTestCase {
         XCTAssertTrue(input.isMutableSharedObjectInput())
         XCTAssertEqual(resolved.count, 1)
     }
+
+    private func structType(_ address: String, _ module: String, _ name: String) throws -> SuiMoveNormalizedType {
+        .structure(SuiMoveNormalizedStructType(
+            address: try AccountAddress.fromHex(address),
+            module: module,
+            name: name,
+            typeArguments: []
+        ))
+    }
+
+    func testThatReceivingParameterIsDetected() throws {
+        let receiving = try structType("0x2", "transfer", "Receiving")
+        XCTAssertTrue(try TransactionBlock.isReceivingType(receiving))
+        XCTAssertTrue(try TransactionBlock.isReceivingType(.reference(receiving)))
+    }
+
+    func testThatOtherParametersAreNotReceiving() throws {
+        XCTAssertFalse(try TransactionBlock.isReceivingType(nil))
+        XCTAssertFalse(try TransactionBlock.isReceivingType(.u64))
+        XCTAssertFalse(try TransactionBlock.isReceivingType(try structType("0x2", "coin", "Coin")))
+        XCTAssertFalse(try TransactionBlock.isReceivingType(try structType("0x2", "transfer", "Other")))
+        XCTAssertFalse(try TransactionBlock.isReceivingType(try structType("0x3", "transfer", "Receiving")))
+    }
+
+    /// A receiving object encodes with discriminator 2 and round-trips unchanged.
+    func testThatReceivingObjectRoundTripsThroughBCS() throws {
+        let original = ref(7)
+        let ser = Serializer()
+        try Serializer._struct(ser, value: ObjectArg.receiving(ReceivingObject(ref: original)))
+        let bytes = [UInt8](ser.output())
+        XCTAssertEqual(bytes.first, 2)
+
+        let decoded = try ObjectArg.deserialize(from: Deserializer(data: Data(bytes)))
+        guard case .receiving(let receiving) = decoded else { return XCTFail("expected .receiving, got \(decoded)") }
+        XCTAssertEqual(try Inputs.normalizeSuiAddress(value: receiving.ref.objectId), try Inputs.normalizeSuiAddress(value: original.objectId))
+        XCTAssertEqual(receiving.ref.version, original.version)
+        XCTAssertEqual(receiving.ref.digest, original.digest)
+
+        let reser = Serializer()
+        try Serializer._struct(reser, value: decoded)
+        XCTAssertEqual([UInt8](reser.output()), bytes)
+    }
 }

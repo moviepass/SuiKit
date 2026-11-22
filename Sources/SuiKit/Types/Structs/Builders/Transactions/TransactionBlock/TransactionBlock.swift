@@ -755,12 +755,7 @@ public class TransactionBlock {
                     guard let objRef = object.getObjectReference() else { continue }
                     guard let objectData = object.data else { continue }
                     
-                    let isReceiving = try
-                    objectToResolve.normalizedType?.extractStructTag()?.address.hex() == Inputs.normalizeSuiAddress(value: "0x2") &&
-                    objectToResolve.normalizedType?.extractStructTag()?.module == "transfer" &&
-                    objectToResolve.normalizedType?.extractStructTag()?.name == "Receiving"
-                    
-                    if(isReceiving) {
+                    if try Self.isReceivingType(objectToResolve.normalizedType) {
                         objectToResolve.input.value = .callArg(
                             Input(
                                 type: .object(
@@ -819,7 +814,16 @@ public class TransactionBlock {
         }
     }
 
-    /// Stores a resolved object under its input index.
+    /// True when a Move parameter type is `0x2::transfer::Receiving<T>` (by value or by
+    /// reference). A generic `T` parameter is not checked against its type arguments.
+    static func isReceivingType(_ type: SuiMoveNormalizedType?) throws -> Bool {
+        guard let structTag = type?.extractStructTag() else { return false }
+        return try structTag.address.hex() == Inputs.normalizeSuiAddress(value: "0x2") &&
+            structTag.module == "transfer" &&
+            structTag.name == "Receiving"
+    }
+
+        /// Stores a resolved object under its input index.
     ///
     /// The same input can be resolved more than once (once with no type, then once per Move
     /// call that uses it). The last entry wins, except that a shared object stays mutable
